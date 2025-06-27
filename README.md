@@ -171,11 +171,11 @@ The table below details our environment, system requirements, and the OS of each
      
    ![copy](https://github.com/user-attachments/assets/cb2afeae-0682-4375-8ab7-c261cd4dde1e)
 
-### ☁️ In the Cloud (DigitalOcean): Creating Wazuh & TheHive Droplets
+## ☁️ In the Cloud (DigitalOcean): Creating Wazuh & TheHive Droplets
 
 To deploy the SOC solution components in the cloud, we'll create two separate Droplets (virtual machines),  one for **Wazuh** and one for **TheHive**, using [DigitalOcean](https://www.digitalocean.com/).
 
-#### 🔧 Droplet Configuration
+### 🔧 Droplet Configuration
 
 - **Image:** Ubuntu 22.04 (LTS)
 - **Plan:** Basic CPU
@@ -187,11 +187,11 @@ To deploy the SOC solution components in the cloud, we'll create two separate Dr
   - `TheHive` for the TheHive server
 - **Authentication:** Set a strong root password or use SSH keys
 
-#### 🔒 Securing Access: Configure a Basic Firewall
+### 🔒 Securing Access: Configure a Basic Firewall
 
 Since these Droplets are accessible over the internet via SSH, it's essential to limit exposure to potential threats using DigitalOcean's built-in firewall.
 
-##### 🚧 Steps to Set Up a Firewall:
+#### 🚧 Steps to Set Up a Firewall:
 
 - Navigate to: Networking > Firewalls
 - Create Inbound & Outbound rules to limit Incoming/Outcoming TCP and UDP traffic to your IP address.
@@ -205,7 +205,7 @@ Since these Droplets are accessible over the internet via SSH, it's essential to
    ![3- firewall](https://github.com/user-attachments/assets/cbc2b2ee-848f-45a5-a030-6130eddbdf1e)
 
 
-#### 🔐 Connect to the Wazuh Server via SSH
+### 🔐 Connect to the Wazuh Server via SSH
 Once our Droplets are created and the firewall applied to them, let's try to connect to our Wazuh server via SSH using this command :
 ````
   ssh root@<YOUR_WAZUH_DROPLET_IP>
@@ -228,7 +228,7 @@ User: admin
 Password: *******************
 ````
 
-##### Access the Wazuh Web Interface:
+#### Access the Wazuh Web Interface:
 
 We can now access the Wazuh Dashboard at https://[Wazuh-Droplet-IP]/ and use the credentials to sign in.
 
@@ -237,13 +237,15 @@ We can now access the Wazuh Dashboard at https://[Wazuh-Droplet-IP]/ and use the
 Now we have our client machines and Wazuh server up and running. The next step is to install TheHive on our second droplet.
 
 
-#### 🐝 Install TheHive
+### 🐝 Install TheHive
 
 We start by installing the necessary dependencies for TheHive: 
 
 ````
 apt install wget gnupg apt-transport-https git ca-certificates ca-certificates-java curl software-properties-common python3-pip lsb-release
 ````
+
+<details>
 
 Java Installation
 
@@ -307,6 +309,229 @@ Edit the Cassandra configuration file:
 5- systemctl status cassandra.service
 
 ````
+
+Configure ElasticSearch:
+````
+1- sudo nano /etc/elasticsearch/elasticsearch.yml
+   - Uncomment and edit the following:
+      - cluster.name: thehive
+      - node.name: node-1
+      - `network.host: [TheHive droplet’s public IP]
+      - http.port: 9200
+      - `cluster.initial_master_nodes: [“node-1”]
+2- systemctl start elasticsearch
+3- systemctl enable elasticsearch
+4- systemctl status elasticsearch
+````
+
+Configure TheHive:
+
+````
+# Set proper permissions
+- sudo chown -R thehive:thehive /opt/thp
+- ls -la /opt/thp
+
+# Edit application configuration
+- sudo nano /etc/thehive/application.conf
+   - hostname = ["<TheHive droplet's public IP>"]
+   - Set cluster-name to the same as cluster_name in Cassandra earlier.
+   - Change application.baseURL = "http://[TheHive droplet's public IP]:9000"
+
+# Start TheHive:
+- systemctl start thehive
+- systemctl enable thehive
+- sudo systemctl status thehive (At this point, all 3 services should be running, which can be checked using systemctl status [service].)
+````
+</details>
+
+Now we can check out the TheHive dashboard by just going to ``<TheHive droplet's public IP>:9000`` and signing in using the credentials: ``admin@thehive.local:secret``
+
+![20- login page](https://github.com/user-attachments/assets/27c58c40-9bae-4b7e-a708-8cf368cb1bce)
+
+## ➕ Adding Wazuh Agents
+
+![2- we login into wazuh3](https://github.com/user-attachments/assets/06915faa-6a8e-461f-abe5-e84f791bac66)
+
+After signing in to the Wazuh web interface, we observe that there are no agents present. Therefore, we need to add agents to our Wazuh manager, as illustrated in the figure above.
+
+ To add an agent to our VMs endpoint, we started by opening Windows PowerShell with administrative privileges and a root terminal. Thereafter, we execute the command retrieved from the Wazuh web application.
+ The following figures illustrate how we installed Wazuh agents on our VMs using these commands and started them.
+
+ ![4- start the agent](https://github.com/user-attachments/assets/28eac1e2-f500-4439-a51f-fb183ef10aaf)
+
+ ![1](https://github.com/user-attachments/assets/366e9c89-4851-4b96-9a1a-4a2a33b87814)
+
+Give it a bit, and when you refresh the Wazuh dashboard, you’ll see that the agent got installed without a hitch!
+
+![wazuh agents](https://github.com/user-attachments/assets/a335400c-b64a-4f42-a254-ddaf2aa9dd8c)
+
+
+## </> Configure Wazuh to ingest Sysmon data
+
+Wazuh works a bit differently from other SIEMs because only the logs that actually trigger a rule show up on the Dashboard, instead of sending all logs over. We need to set up our Wazuh agent to make sure it collects the specific data we want, which in this case is Sysmon. 
+
+Just follow these [steps](https://www.youtube.com/watch?v=amTtlN3uvFU) to get it all sorted out.
+
+## 📋 Create Rules for Wazuh
+
+On the Wazuh dashboard, under Management > Administration > Rules, we can create rules that will trigger when a specific event occurs.
+
+Using a rule from ``0800-sysmon_id_1.xml`` as a template:
+   - Select Custom rules > edit local_rules.xml
+   - We Added a new rule that will detect if an executed file’s original name was Mimikatz.exe
+
+In this part, we created a custom rule aimed at detecting Mimikatz malware activity. This rule triggers when new processes are produced (from the Sysmon logs with Event ID = 1) and we set a high level of severity to quickly identify attempts to obtain stored credentials from the victim endpoint. By using the technique ``ID=T1003`` for OS credential tampering from MITRE ATT&CK and depending on the ``OriginalFileName`` field rather than generic filenames, our rule remains effective even in instances where attackers may rename malicious files. This strategic method improves the capability to discover advanced malware and enhances the security of the system.
+
+The figure below presents how we edited the ``local rules.xml`` file on the Wazuh manager to add our custom rule for Mimikatz malware.
+
+![2- edit the local_rules file to add our custom mimikatz rule](https://github.com/user-attachments/assets/a08546b3-ce0e-453e-be31-54c979ee5557)
+
+Now, if we run Mimikatz on our system, a security alert will be created on our dashboard.
+
+## 🤖 Shuffle Automation  
+
+At this point, we need to head over to shuffler.io and set up a Shuffle account. Then we navigated to the Workflows page and created two new workflows named **Mimikatz Workflow** & **SSH Brute-Force Workflow** as shown below.
+<details>
+   
+![0-Mimikatz Workflow](https://github.com/user-attachments/assets/5d389189-66da-4166-8ba9-b20101f33674)
+
+When the malware is executed on the endpoint, the triggered alert by the Wazuh manager is forwarded via the webhook, and then Shuffle processes it through our workflow steps:
+ 1. **IoC Extraction:**
+     Shuffle uses regular expressions (regex) to extract the SHA-256 hash of the malware from the Wazuh alert.
+ 2. **VirusTotal Enrichment:**
+    The retrieved hash is sent to VirusTotal to obtain its reputation score and further details.
+ 3. **TheHive Alert Creation:**
+    An alert will be generated on TheHive platform automatically.
+ 4. **TheHive Case Creation:**
+    A case is then automatically created and linked to the alert. The hostname, filename, and file hashes have been added to the case as observables for deeper examination.
+ 5. **Send an Email:** At the end, Shuffle notifies the SOC Analyst by email to prompt him to begin the investigation.
+
+![7-ssh workflow](https://github.com/user-attachments/assets/da7be834-10d9-435f-b1cc-648911a08fc4)
+
+Once an SSH Brute Force alert is received, Shuffle processes it through the following steps:
+ 1. **IP Extraction:** The IP address of the attacker has been extracted from the alert.
+ 2. **TheHive Alert Creation:** Shuffle automatically creates a new alert on TheHive and adds the extracted malicious IP as an observable to it.
+ 3. **VirusTotal Enrichment:** The malicious IP is sent to VirusTotal to obtain its reputation score and its report.
+ 4. **Send an Email:** Shuffle sends an email to the SOC analyst asking whether to block the malicious IP address or not, and prompts him to start an investigation based on the analysis results of VirusTotal.
+ 5. **Active Response:** At the end, the workflow can either proceed with an active response to block the attacker’s IP address or not, based on the analyst’s decision.
+
+</details>
+
+If you’re interested in learning how I put these workflows together, [check this out.](https://www.youtube.com/watch?v=GNXK00QapjQ&list=PLG6KGSNK4PuBWmX9NykU0wnWamjxdKhDJ&index=11)
+
+## 🧐 Testing of the automated solution 
+
+For the first demo, we planned to simulate a Mimikatz malware attack on our Windows endpoint to test threat detection and demonstrate the execution of the Shuffle workflow that we created. Initially, we began by installing [Mimikatz](https://github.com/gentilkiwi/mimikatz/releases/tag/2.2.0-20220919)  on our Windows VM. Before executing it and for testing purposes, we renamed the executable malware to ``malwareofnidhal`` to evaluate the efficacity of our custom rule that we made,  as shown in the two figures below.
+
+![3- I changed the name of file ](https://github.com/user-attachments/assets/2523a398-8f8e-40af-b940-6f309f9363df)
+
+![3-](https://github.com/user-attachments/assets/f22466ab-913b-4f21-8f89-53a307e208cc)
+
+The Wazuh dashboard shown below clearly shows that our custom rule managed to spot the renamed malware right after it ran.
+
+![1-wazuh alert](https://github.com/user-attachments/assets/00d028d3-0409-45ad-ab43-75fefdaa2cee)
+
+After enrichment and extraction, our workflow automatically generates an alert in TheHive and creates a linked case, as shown in the following figures.
+
+![3-thehive alert description](https://github.com/user-attachments/assets/2c42a757-a525-41b2-a4d3-ff3fd1852841)
+
+![4-thehive case](https://github.com/user-attachments/assets/a8144114-db9e-451e-b0be-a4319f3e72bd)
+
+![6-thehive case observables](https://github.com/user-attachments/assets/d1c85e4c-2cdd-41c1-982d-79c8e14092c3)
+
+An automated email alerts SOC analysts to the detected attack, ensuring they’re quickly aware and can respond right away, as shown in the screenshot below.
+
+![7-mimikatz email](https://github.com/user-attachments/assets/990aed32-abfd-4d95-82a5-a0e5ba667c0e)
+
+For the second demo, we planned to simulate an SSH brute-force attack on our Linux endpoint to test threat detection, active response, and demonstrate the Shuffle workflow we created.
+
+The image below shows how we use our Hydra command to launch our attack from the attacker machine. 
+
+![4- hydra](https://github.com/user-attachments/assets/83fb6699-b546-4500-ab5e-b15aad4aeb15)
+
+I have hidden the target IP, which is our victim machine in this case.
+
+![9- wazuh 1](https://github.com/user-attachments/assets/38040d39-09bd-4155-bf64-eed4685b3e99)
+
+And here, as we can see, the Wazuh dashboard is showing an alert about an IP address that's been behind a lot of failed login attempts.
+
+After enrichment and extraction, our workflow automatically generates an alert in TheHive, as shown in the following figure.
+
+![5-thehive alert description](https://github.com/user-attachments/assets/ec3a1003-a07e-4d88-888f-90b836f491d4)
+
+The last part of our workflow, an automated email is sent to the SOC analyst with the analysis results, allowing them to decide whether to block the IP, as shown below.
+
+![6-email](https://github.com/user-attachments/assets/dafdc10a-fdcd-4807-bc73-408a5cc38799)
+
+Once we’ve blocked the IP, let’s double-check to make sure it’s actually blocked on our target machine. We can do this with the iptables command like this:
+
+![8- verfication](https://github.com/user-attachments/assets/49e5ebef-474e-43cf-976e-2a68d8cb4cec)
+
+## 📈 Evaluation Metrics (SOC Metrics & KPIs)
+
+To evaluate our solution's effectiveness, we will assess two key metrics: Mean Time to Detect (MTTD) and Mean Time to Respond (MTTR). These indicators help measure the responsiveness and efficiency of our cybersecurity operations.
+
+- MTTD: represents the average duration that a system takes to recognize an incident from the moment it initiates. It serves as a reflection of the system’s detection capability and speed.
+     -  MTTD Formula:
+
+        <img src="images/mttd2.png" alt="mttd"/>
+        
+- MTTR: is a critical metric that represents the average time required for the security team to respond to the detected incident. It highlights the rate at which mitigation actions are activated, either automatically or by a SOC analyst.
+     - MTTR Formula:
+
+       <img src="images/mttr.png" alt="mttr"/>
+
+Calculating the MTTD and MTTR helps us see how well the solution performs in real attack scenarios. But I won’t go into the details here because all the data and calculations are already in my report.
+
+## 👋 Conclusion
+
+During this project, I gained practical experience with several key tools utilized in modern security operations, including:
+   - Wazuh for log analysis and SIEM
+   - Shuffle for automation and SOAR workflows
+   - TheHive for case management and incident response
+
+These platforms fit together really well and show just how powerful open-source solutions can be when you integrate them properly. This lab wasn't just about setting up tools, it really helped me see the value of detection, automation, and documentation in real-world security operation.
+
+🔧 Getting your hands dirty with these tools is one of the best ways to level up in cybersecurity theory is good, but nothing beats practice.
+
+## 🧠 Inspiration
+
+This project was inspired by the awesome work of **MyDFIR** on [YouTube](https://www.youtube.com/@MyDFIR). His playlist provided valuable guidance in the setup process and helped me set everything up, big shoutout to him!
+
+For those interested in blue teaming or seeking to enhance their SOC skills, I highly recommend engaging with his projects/labs and exploring the learning paths on [TryHackMe](https://tryhackme.com/paths).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
