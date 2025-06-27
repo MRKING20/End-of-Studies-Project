@@ -132,15 +132,196 @@ Predefined automated steps like isolating hosts, sending alerts, or blocking mal
 
 ## ⚙️Setting up our Environment
 
+### 🖥️ System Configuration
 The table below details our environment, system requirements, and the OS of each equipment.
 
 | **Equipment**                         | **Type**          | **OS**                            | **Configurations**                                                                 
-|---------------------------------------|-------------------|-----------------------------------|------------------------------------------------------------------------------------------------------------------
+|---------------------------------------|-------------------|-----------------------------------|--------------------------------------------------------------------------------------------------------------
 | **Wazuh Manager Server**              | Cloud (DigitalOcean) | Ubuntu Server 22.04 (LTS) x64  | - Memory: 8 GB  <br> - Storage: 160 GB <br> - Processor: 2 cores                    
 | **TheHive Server**                    | Cloud (DigitalOcean) | Ubuntu Server 22.04 (LTS) x64  | - Memory: 8 GB  <br> - Storage: 160 GB <br> - Processor: 2 cores    
 | **VM1 + Wazuh-Agent**                 | Virtual              | Windows 10                     | - Memory: 4 GB  <br> - Storage: 50 GB <br> - Processor: 1 core                
 | **VM2 + Wazuh-Agent**                 | Virtual              | Ubuntu                         | - Memory: 4 GB  <br> - Storage: 50 GB <br> - Processor: 1 core                            
 | **Attacker Machine**                  | Virtual              | Kali Linux                     | - Memory: 4 GB  <br> - Storage: 50 GB <br> - Processor: 2 cores               
+
+> ⚠️ **Note:** I won't cover how to create the virtual machines in detail, as it's a standard procedure. We’ll focus instead on configuring Sysmon on the Windows 10 VM.
+
+### ✅ Step-by-Step: Installing Sysmon on Windows 10
+
+1. **Create the Windows 10 Virtual Machine**  
+   Use a [Windows 10 ISO](https://www.microsoft.com/en-us/software-download/windows10) in your preferred virtualization software (VirtualBox, VMware, etc.).
+
+2. **Download Sysmon**  
+   - Get the latest [Sysmon release](https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon) from the Microsoft Sysinternals website.
+   - Download the `sysmonconfig.xml` file from the [Sysmon Modular GitHub repository](https://github.com/olafhartong/sysmon-modular).
+
+3. **Set Up Sysmon**  
+   - Extract the `Sysmon.zip` archive to a folder.
+   - Move the downloaded `sysmonconfig.xml` into that same folder.
+
+4. **Install Sysmon**  
+   Open PowerShell **as Administrator**, navigate to the Sysmon folder, and run the following command:
+   ```powershell
+   .\Sysmon64.exe -i .\sysmonconfig.xml
+    ```
+   ![sysmon installation on the cloud](https://github.com/user-attachments/assets/3445282c-c6c3-48f7-8615-d3874017169f)
+
+   You can verify that Sysmon was installed successfully with:
+
+   - **Services.msc:** Confirm the presence of Sysmon64 as showed below
+     
+   ![copy](https://github.com/user-attachments/assets/cb2afeae-0682-4375-8ab7-c261cd4dde1e)
+
+### ☁️ In the Cloud (DigitalOcean): Creating Wazuh & TheHive Droplets
+
+To deploy the SOC solution components in the cloud, we'll create two separate Droplets (virtual machines),  one for **Wazuh** and one for **TheHive**, using [DigitalOcean](https://www.digitalocean.com/).
+
+#### 🔧 Droplet Configuration
+
+- **Image:** Ubuntu 22.04 (LTS)
+- **Plan:** Basic CPU
+- **Memory:** 8 GB RAM
+- **Storage:** 160 GB SSD
+- **Processor:** 2 vCPUs
+- **Hostname:** 
+  - `Wazuh` for the Wazuh server
+  - `TheHive` for the TheHive server
+- **Authentication:** Set a strong root password or use SSH keys
+
+#### 🔒 Securing Access: Configure a Basic Firewall
+
+Since these Droplets are accessible over the internet via SSH, it's essential to limit exposure to potential threats using DigitalOcean's built-in firewall.
+
+##### 🚧 Steps to Set Up a Firewall:
+
+- Navigate to: Networking > Firewalls
+- Create Inbound & Outbound rules to limit Incoming/Outcoming TCP and UDP traffic to your IP address.
+
+  ![lastfirewall2](https://github.com/user-attachments/assets/2418f8d0-8242-4c89-91eb-dc94e6453d50)
+
+  ![2- firewall](https://github.com/user-attachments/assets/2716c5e7-2871-4f6a-9576-df63c0ab93cb)
+
+  ##### Apply the Firewall to Your Droplets:
+   Select both `Wazuh` and `TheHive` droplets under **"Add Droplets"**.
+   ![3- firewall](https://github.com/user-attachments/assets/cbc2b2ee-848f-45a5-a030-6130eddbdf1e)
+
+
+#### 🔐 Connect to the Wazuh Server via SSH
+Once our Droplets are created and the firewall applied to them, let's try to connect to our Wazuh server via SSH using this command :
+````
+  ssh root@<YOUR_WAZUH_DROPLET_IP>
+````
+With SSH access confirmed, let's update our system:
+
+````
+sudo apt-get update && sudo apt-get upgrade -y
+````
+Now we are ready to install and configure Wazuh with the curl command located on the [Wazuh Quickstart Guide](https://documentation.wazuh.com/current/quickstart.html).
+
+````
+curl -sO https://packages.wazuh.com/4.7/wazuh-install.sh && sudo bash ./wazuh-install.sh -a
+````
+
+After running this command, the installation process will begin. Don't forget to take note of the generated password for the "admin" user:
+
+````
+User: admin
+Password: *******************
+````
+
+##### Access the Wazuh Web Interface:
+
+We can now access the Wazuh Dashboard at https://[Wazuh-Droplet-IP]/ and use the credentials to sign in.
+
+![1-connecting to wazuh sever2](https://github.com/user-attachments/assets/396b7379-59a1-42d6-a186-9e3df3292ae0)
+
+Now we have our client machines and Wazuh server up and running. The next step is to install TheHive on our second droplet.
+
+
+#### 🐝 Install TheHive
+
+We start by installing the necessary dependencies for TheHive: 
+
+````
+apt install wget gnupg apt-transport-https git ca-certificates ca-certificates-java curl software-properties-common python3-pip lsb-release
+````
+
+Java Installation
+
+````
+wget -qO- https://apt.corretto.aws/corretto.key | sudo gpg --dearmor -o /usr/share/keyrings/corretto.gpg
+echo "deb [signed-by=/usr/share/keyrings/corretto.gpg] https://apt.corretto.aws stable main" | sudo tee -a /etc/apt/sources.list.d/corretto.sources.list
+sudo apt update
+sudo apt install java-common java-11-amazon-corretto-jdk
+echo JAVA_HOME="/usr/lib/jvm/java-11-amazon-corretto" | sudo tee -a /etc/environment
+export JAVA_HOME="/usr/lib/jvm/java-11-amazon-corretto"
+````
+
+Cassandra Installation: Cassandra is the database used by TheHive for storing data.
+
+````
+wget -qO - https://downloads.apache.org/cassandra/KEYS | sudo gpg --dearmor -o /usr/share/keyrings/cassandra-archive.gpg
+echo "deb [signed-by=/usr/share/keyrings/cassandra-archive.gpg] https://debian.cassandra.apache.org 40x main" | sudo tee -a /etc/apt/sources.list.d/cassandra.sources.list
+sudo apt update
+sudo apt install cassandra
+````
+
+Elasticsearch Installation: Elasticsearch is used by TheHive for indexing and searching data.
+
+````
+wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo gpg --dearmor -o /usr/share/keyrings/elasticsearch-keyring.gpg
+sudo apt-get install apt-transport-https
+echo "deb [signed-by=/usr/share/keyrings/elasticsearch-keyring.gpg] https://artifacts.elastic.co/packages/7.x/apt stable main" | sudo tee /etc/apt/sources.list.d/elastic-7.x.list
+sudo apt update
+sudo apt install elasticsearch
+````
+
+Limit the ElasticSearch RAM usage (so it doesn't crash!):
+
+- nano /etc/elasticsearch/jvm.options.d/jvm.options
+- Paste the following:
+````
+-Dlog4j2.formatMsgNoLookups=true
+-Xms2g
+-Xmx2g
+````
+
+TheHive Installation:
+````
+wget -O- https://archives.strangebee.com/keys/strangebee.gpg | sudo gpg --dearmor -o /usr/share/keyrings/strangebee-archive-keyring.gpg
+echo 'deb [signed-by=/usr/share/keyrings/strangebee-archive-keyring.gpg] https://deb.strangebee.com thehive-5.2 main' | sudo tee -a /etc/apt/sources.list.d/strangebee.list
+sudo apt-get update
+sudo apt-get install -y thehive
+````
+
+Once TheHive, Cassandra, and Elasticsearch are installed on your droplet, use the following steps to configure each component properly.
+
+Configure Cassandra:
+````
+Edit the Cassandra configuration file:
+1- sudo nano /etc/cassandra/cassandra.yaml
+   - Change cluster_name (optional)
+   - Change listen_address:, rpc_address:, and under seed_provider: seeds: to TheHive droplet’s public IP
+2- systemctl stop cassandra.service
+3- rm -rf /var/lib/cassandra/*
+4- systemctl start cassandra.service
+5- systemctl status cassandra.service
+
+````
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
